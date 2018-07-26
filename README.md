@@ -1,0 +1,2 @@
+# Real-Time-Client-Server
+This project contains of 3 java-projects: OptimiziedStreamLibrary, RealTimeClient, RealTimeServer. Server can be used for online-games and other applications required run time community. Server based on UDP-protocol. The main idea is sending of updating messages influenced on game world and query messages. Server sends update message in needed iteration of each client. For more information write to alexandrshirokanev@gmail.com.
