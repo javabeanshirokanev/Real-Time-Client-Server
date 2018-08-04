@@ -5,9 +5,13 @@
  */
 package data;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import javafx.util.Pair;
 
 /**
@@ -89,5 +93,33 @@ public class WriterReader {
         short number = block.getBlockIdentificator();
         stream.writeShort(number);
         block.writeData(stream);
+    }
+    
+    public static DataBlock convertToBlock(byte[] bytes) {
+        DataBlock b = null;
+        try(ByteArrayInputStream stream = new ByteArrayInputStream(bytes)) {
+            try(DataInputStream in = new DataInputStream(stream)) {
+                b = readData(in);
+            } catch (IllegalAccessException ex) {
+                Logger.getLogger(WriterReader.class.getName()).log(Level.SEVERE, null, ex);
+            } catch (InstantiationException ex) {
+                Logger.getLogger(WriterReader.class.getName()).log(Level.SEVERE, null, ex);
+            }
+        } catch(IOException ex) {
+            
+        }
+        return b;
+    }
+    public static byte[] convertToBytes(DataBlock block) {
+        byte[] res = null;
+        try(ByteArrayOutputStream stream = new ByteArrayOutputStream(block.getByteCount())) {
+            try(DataOutputStream out = new DataOutputStream(stream)) {
+                writeData(out, block);
+                res = stream.toByteArray();
+            }
+        } catch(IOException ex) {
+            
+        }
+        return res;
     }
 }

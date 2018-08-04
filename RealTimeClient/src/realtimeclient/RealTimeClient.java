@@ -24,6 +24,8 @@ import java.net.SocketException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  *
@@ -190,6 +192,12 @@ public class RealTimeClient {
         }
     }
     
+    private byte[] getQueryResult(byte[] message) {
+        writer.writeMessage(message);
+        reader.readMessage(queryForNextPart);
+        return reader.getMessage();
+    }
+    
     private void sendUpdatingMessage() {
         byte[] fullMessage = new byte[message.length + 5];
         fullMessage[0] = UPDATE_MESSAGE;
@@ -264,31 +272,32 @@ public class RealTimeClient {
 //        }
     }
     
-    /**
-     * Отправить запрос у другого клиента
-     * @param message Сообщение
-     * @throws IOException 
-     */
-    public void sendClientQueryMessage(byte[] message) throws IOException {
-        byte[] fullMessage = new byte[message.length + 5];
-        fullMessage[0] = CLIENT_QUERY;
-        PartWriter.writeInt(clientID, fullMessage, 1);
-        System.arraycopy(message, 0, fullMessage, 5, message.length);
-        addMessage(fullMessage);
-        sendQuery(fullMessage);
-    }
+//    /**
+//     * Отправить запрос у другого клиента
+//     * @param message Сообщение
+//     * @throws IOException 
+//     */
+//    public void sendClientQueryMessage(byte[] message) throws IOException {
+//        byte[] fullMessage = new byte[message.length + 5];
+//        fullMessage[0] = CLIENT_QUERY;
+//        PartWriter.writeInt(clientID, fullMessage, 1);
+//        System.arraycopy(message, 0, fullMessage, 5, message.length);
+//        addMessage(fullMessage);
+//        sendQuery(fullMessage);
+//    }
     
-    public void sendClientStateQuery() throws IOException {
-        sendClientQueryMessage(new byte[] { QUERY_CLIENT_STATE });
-    }
+//    public void sendClientStateQuery() throws IOException {
+//        sendClientQueryMessage(new byte[] { QUERY_CLIENT_STATE });
+//    }
     
-    public void sendQueryMessage(byte[] message) throws IOException {
+    public byte[] getResultQuery(byte[] message) throws IOException {
         byte[] fullMessage = new byte[message.length + 5];
         PartWriter.writeInt(clientID, fullMessage, 0);     //Нужен, чтобы по частям всё было
         fullMessage[4] = QUERY;
         System.arraycopy(message, 0, fullMessage, 5, message.length);
         addMessage(fullMessage);
-        sendQuery(fullMessage);
+        return getQueryResult(fullMessage);
+        
         
 //        if(queryMessage != null) {
 //            //Формируем запрос
@@ -307,18 +316,29 @@ public class RealTimeClient {
 //        }
     }
     
-    public void sendQueryMessage(DataBlock block) throws IOException {
+    public DataBlock getResultQuery(DataBlock block) throws IOException, IllegalAccessException, InstantiationException {
         int count = block.getByteCount();
+        DataBlock result = null;
         try(ByteArrayOutputStream bStream = new ByteArrayOutputStream(count + 5)) {
             try(DataOutputStream stream = new DataOutputStream(bStream)) {
                 stream.writeInt(clientID);
                 stream.writeByte(QUERY);
                 block.writeData(stream);
-                addMessage(bStream.toByteArray());
+                writer.writeMessage(bStream.toByteArray());
+                reader.readMessage(queryForNextPart);
+                byte[] buf = reader.getBufferingMessage();
+                int bufCount = reader.getMessageLength();
+                
+                try(ByteArrayInputStream bIn = new ByteArrayInputStream(buf, 0, bufCount)) {
+                    try(DataInputStream in = new DataInputStream(bIn)) {
+                        result = WriterReader.readData(in);
+                    }
+                }
             }
         } catch(IOException e) {
             
         }
+        return result;
     }
     
 //    public byte[] getServerData(byte[] params) {
@@ -384,6 +404,7 @@ public class RealTimeClient {
     public void connect(InetAddress ip, int port) {
         senderReceiver.setEndPoint(ip, port);
         writer.setStaticSenderReceiver(senderReceiver);
+        reader.setStaticSenderReceiver(senderReceiver);
         
         //Отправляем запрос на подключение и получаем id клиента
         //===================================================
@@ -435,8 +456,9 @@ public class RealTimeClient {
             byte type = stream.readByte();    //Тип сообщения
             if(type == FINAL_CONNECT) {
                 this.iteration = stream.readInt();
+                DataBlock b = WriterReader.readData(stream);
                 for(StateGettedListener listener : stateGettedListeners) {
-                    listener.clientStateGetted(this, stream, stream.available());
+                    listener.clientStateGetted(this, b);
                 }
                 mainAddress = new InetSocketAddress(ip, port);
                 //С этого момента клиент подключен...
@@ -457,6 +479,10 @@ public class RealTimeClient {
             }
         } catch(IOException e) {
             
+        } catch (IllegalAccessException ex) {
+            Logger.getLogger(RealTimeClient.class.getName()).log(Level.SEVERE, null, ex);
+        } catch (InstantiationException ex) {
+            Logger.getLogger(RealTimeClient.class.getName()).log(Level.SEVERE, null, ex);
         }
     }
     

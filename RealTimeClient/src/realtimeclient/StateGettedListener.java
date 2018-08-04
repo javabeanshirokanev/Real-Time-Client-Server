@@ -5,6 +5,7 @@
  */
 package realtimeclient;
 
+import data.DataBlock;
 import java.io.DataInputStream;
 import java.io.IOException;
 
@@ -13,6 +14,6 @@ import java.io.IOException;
  * @author Широканев Александр
  */
 public interface StateGettedListener {
-    void clientStateGetted(RealTimeClient sender, DataInputStream reader, int gettedBytes) throws IOException;
+    void clientStateGetted(RealTimeClient sender, DataBlock block) throws IOException;
     void serverStateGetted(RealTimeClient sender, DataInputStream reader) throws IOException;
 }

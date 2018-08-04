@@ -5,10 +5,12 @@
  */
 package realtimeserver;
 
+import data.DataBlock;
 import data.DataReceivedListener;
 import data.PartReader;
 import data.PartWriter;
 import data.SimpleUDPSenderReceiver;
+import data.WriterReader;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -462,7 +464,7 @@ public class RealTimeServer {
         if(args.length != 1) {
             System.err.println("Неверное количество параметров! Нужно выбрать порт");
         }
-        int port = Integer.getInteger(args[0]);
+        int port = Integer.parseInt(args[0]);
         RealTimeServer server = null;
         try {
             server = new RealTimeServer(port, null);   //Параметры через аргументы
@@ -532,7 +534,8 @@ public class RealTimeServer {
                 return;
             }
             if(messageType == QUERY) {
-                byte[] query = state.getUnswerToQuery(clientIPAddress, clientPort, in);
+                DataBlock data = state.getUnswerToQuery(clientIPAddress, clientPort, in);
+                byte[] query = WriterReader.convertToBytes(data);
                 byte[] mess = new byte[query.length + 1];
                 mess[0] = QUERY;
                 System.arraycopy(query, 0, mess, 1, query.length);
@@ -554,7 +557,8 @@ public class RealTimeServer {
                 if(state.isParamsCorrect(params)) {
                     byte[] mess = null;
                     if(state != null) {
-                        mess = state.getStateForConnectedClient(clientIPAddress, clientPort, clientID);
+                        DataBlock r = state.getStateForConnectedClient(clientIPAddress, clientPort, clientID);
+                        mess = WriterReader.convertToBytes(r);
                     }
                     if(mess != null) {
                         byte[] resultMessage = new byte[mess.length + 5];

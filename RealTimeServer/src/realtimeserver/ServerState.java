@@ -5,6 +5,7 @@
  */
 package realtimeserver;
 
+import data.DataBlock;
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.net.InetAddress;
@@ -15,8 +16,8 @@ import java.net.InetAddress;
  */
 public interface ServerState {
     boolean isParamsCorrect(byte[] params);
-    byte[] getStateForConnectedClient(InetAddress ip, int port, int clientID);
-    byte[] getUnswerToQuery(InetAddress ip, int port, DataInputStream in);
+    DataBlock getStateForConnectedClient(InetAddress ip, int port, int clientID);
+    DataBlock getUnswerToQuery(InetAddress ip, int port, DataInputStream in);
     void update(RealTimeServer server);
     void updatingMessageReceived(RealTimeServer server, DataInputStream reader) throws IOException;
 }
