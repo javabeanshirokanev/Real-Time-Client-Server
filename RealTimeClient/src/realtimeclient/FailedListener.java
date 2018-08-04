@@ -12,7 +12,7 @@ import java.io.IOException;
  * @author Широканев Александр
  */
 public interface FailedListener {
-    void connectionFailed(int failIndex);
-    void clientQueryUnswerError(int queryError) throws IOException;
-    void adminAuthentificationError();
+    void connectionFailed(RealTimeClient sender, int failIndex);
+    void clientQueryUnswerError(RealTimeClient sender, int queryError) throws IOException;
+    void adminAuthentificationError(RealTimeClient sender);
 }

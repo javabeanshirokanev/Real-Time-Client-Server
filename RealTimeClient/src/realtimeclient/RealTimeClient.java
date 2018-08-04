@@ -10,6 +10,7 @@ import data.PartReader;
 import data.PartWriter;
 import data.SimpleUDPSenderReceiver;
 import data.TimeOutUDPSenderReceiver;
+import data.WriterReader;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -402,18 +403,18 @@ public class RealTimeClient {
                 switch(type) {
                     case MAX_CLIENTS_ERROR:
                         for(ConnectedListener listener : conListeners)
-                            listener.connectionFailed(MAX_CLIENTS_CONNECTION_FAILED);
+                            listener.connectionFailed(this, MAX_CLIENTS_CONNECTION_FAILED);
                         break;
                     case CANNOT_CONNECT_ERROR:
                         for(ConnectedListener listener : conListeners)
-                            listener.connectionFailed(CANNOT_CONNECT_FAILED);
+                            listener.connectionFailed(this, CANNOT_CONNECT_FAILED);
                         break;
                 }
                 return;
             }
         } catch(IOException e) {
             for(ConnectedListener listener : conListeners)
-                listener.connectionFailed(RECEIVE_CONNECTION_FAILED);
+                listener.connectionFailed(this, RECEIVE_CONNECTION_FAILED);
             return;
         }
         //===================================================
@@ -435,22 +436,22 @@ public class RealTimeClient {
             if(type == FINAL_CONNECT) {
                 this.iteration = stream.readInt();
                 for(StateGettedListener listener : stateGettedListeners) {
-                    listener.clientStateGetted(stream, stream.available());
+                    listener.clientStateGetted(this, stream, stream.available());
                 }
                 mainAddress = new InetSocketAddress(ip, port);
                 //С этого момента клиент подключен...
                 for(ConnectedListener listener : conListeners)
-                    listener.connected();
+                    listener.connected(this);
             } else {
                 //Ошибка
                 switch(type) {
                     case INVALID_PARAMS_FAILED :
                         for(ConnectedListener listener : conListeners)
-                            listener.connectionFailed(INVALID_PARAMS_FAILED);
+                            listener.connectionFailed(this, INVALID_PARAMS_FAILED);
                         break;
                     case QUERY_FOR_CONNECT_ERROR :
                         for(ConnectedListener listener : conListeners)
-                            listener.connectionFailed(NOT_QUERY_CONNECTION_FAILED);
+                            listener.connectionFailed(this, NOT_QUERY_CONNECTION_FAILED);
                         break;
                 }
             }
@@ -495,11 +496,11 @@ public class RealTimeClient {
         byte type = message[0];
         if(type == SERVER_CLOSE) {
             flush();
-            for(DisconnectedListener listener : disconListeners) listener.serverClosed();
+            for(DisconnectedListener listener : disconListeners) listener.serverClosed(this);
         }
         if(type == ADMIN_AUTHENTIFICATION_ERROR) {
             for(FailedListener listener : failedListeners)
-                listener.adminAuthentificationError();
+                listener.adminAuthentificationError(this);
         }
     }
     
@@ -507,13 +508,13 @@ public class RealTimeClient {
         byte messageType = stream.readByte();
         if(messageType == CANNOT_CREATE_QUERY_ERROR) {
             for(FailedListener listener : failedListeners) {
-                listener.clientQueryUnswerError(CANNOT_SEND_QUERY);
+                listener.clientQueryUnswerError(this, CANNOT_SEND_QUERY);
             }
             return;
         }
         if(messageType == QUERY) {
             for(QueryReceivedListener listener : queryReceivedListeners) {
-                listener.serverQueryReceived(stream);
+                listener.serverQueryReceived(this, stream);
             }
         }
 //        if(messageType == CLIENT_QUERY_UNSWER) {
@@ -536,29 +537,29 @@ public class RealTimeClient {
             int deltaTime = stream.readInt();
             for(int i = 0; i < deltaTime; i++) {
                 for(UpdatedListener listener : updateListeners)
-                    listener.dataUpdated();
+                    listener.dataUpdated(this);
             }
             return;
         }
         if(messageType == CLIENT_NOT_CONNECTED_ERROR) {
             for(ConnectedListener listener : conListeners)
-                listener.connectionFailed(CLIENT_NOT_CONNECTED);
+                listener.connectionFailed(this, CLIENT_NOT_CONNECTED);
             return;
         }
         if(messageType == BAN_ERROR) {
             for(ConnectedListener listener : conListeners)
-                listener.connectionFailed(CLIENT_BANNED);
+                listener.connectionFailed(this, CLIENT_BANNED);
             return;
         }
         if(messageType == NON_CLIENTS) {
             for(FailedListener listener : failedListeners) {
-                listener.clientQueryUnswerError(NON_CLIENTS_QUERY);
+                listener.clientQueryUnswerError(this, NON_CLIENTS_QUERY);
             }
             return;
         }
         if(messageType == CANNOT_CREATE_QUERY_ERROR) {
             for(FailedListener listener : failedListeners) {
-                listener.clientQueryUnswerError(CANNOT_SEND_QUERY);
+                listener.clientQueryUnswerError(this, CANNOT_SEND_QUERY);
             }
             return;
         }
@@ -590,24 +591,24 @@ public class RealTimeClient {
 //        }
         if(messageType == UPDATE) {
             for(UpdatedListener listener : updateListeners)
-                listener.dataUpdated();    //Событие обновления без полученных команд
+                listener.dataUpdated(this);    //Событие обновления без полученных команд
         }
         if(messageType == UPDATE_MESSAGE) {
             for(UpdatedListener listener : updateListeners) {
-                listener.updatingMessageReceived(stream);    //Событие обработки сообщений
-                listener.dataUpdated();    //Событие обновления без полученных команд
+                listener.updatingMessageReceived(this, stream);    //Событие обработки сообщений
+                listener.dataUpdated(this);    //Событие обновления без полученных команд
             }
         }
         if(messageType == SERVER_CLOSE) {
             flush();
             for(DisconnectedListener listener : disconListeners) {
-                listener.serverClosed();
+                listener.serverClosed(this);
             }
         }
         if(messageType == DISCONNECT) {
             flush();
             for(DisconnectedListener listener : disconListeners)
-                listener.disconnected();
+                listener.disconnected(this);
         }
     }
     
@@ -619,7 +620,7 @@ public class RealTimeClient {
         if(iteration % delay != 0) {
             //Просто обновляем данные
             for(UpdatedListener listener : updateListeners) {
-                listener.dataUpdated();
+                listener.dataUpdated(this);
             }
             return;
         }

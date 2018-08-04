@@ -12,6 +12,6 @@ import java.io.IOException;
  * @author USER
  */
 public interface ConnectedListener {
-    void connected() throws IOException;
-    void connectionFailed(int failIndex);
+    void connected(RealTimeClient sender) throws IOException;
+    void connectionFailed(RealTimeClient sender, int failIndex);
 }

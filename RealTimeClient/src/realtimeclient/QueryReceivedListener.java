@@ -13,6 +13,6 @@ import java.io.IOException;
  * @author USER
  */
 public interface QueryReceivedListener {
-    void serverQueryReceived(DataInputStream reader) throws IOException;
-    void queryUnswerReceived(int queryType, DataInputStream reader) throws IOException;
+    void serverQueryReceived(RealTimeClient sender, DataInputStream reader) throws IOException;
+    void queryUnswerReceived(RealTimeClient sender, int queryType, DataInputStream reader) throws IOException;
 }

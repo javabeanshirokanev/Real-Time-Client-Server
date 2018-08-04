@@ -13,6 +13,6 @@ import java.io.IOException;
  * @author Широканев Александр
  */
 public interface StateGettedListener {
-    void clientStateGetted(DataInputStream reader, int gettedBytes) throws IOException;
-    void serverStateGetted(DataInputStream reader) throws IOException;
+    void clientStateGetted(RealTimeClient sender, DataInputStream reader, int gettedBytes) throws IOException;
+    void serverStateGetted(RealTimeClient sender, DataInputStream reader) throws IOException;
 }

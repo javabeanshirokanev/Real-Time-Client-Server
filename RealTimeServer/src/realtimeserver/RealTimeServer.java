@@ -387,9 +387,9 @@ public class RealTimeServer {
                 maxTime = times[clientID];
                 //Наступила новая итерация сервера
                 if(stream != null) {
-                    state.updatingMessageReceived(stream);
+                    state.updatingMessageReceived(this, stream);
                 }
-                state.update();
+                state.update(this);
             }
         }
     }

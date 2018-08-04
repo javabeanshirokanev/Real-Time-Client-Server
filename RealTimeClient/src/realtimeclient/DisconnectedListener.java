@@ -12,6 +12,6 @@ import java.io.IOException;
  * @author USER
  */
 public interface DisconnectedListener {
-    void disconnected() throws IOException;
-    void serverClosed() throws IOException;
+    void disconnected(RealTimeClient sender) throws IOException;
+    void serverClosed(RealTimeClient sender) throws IOException;
 }

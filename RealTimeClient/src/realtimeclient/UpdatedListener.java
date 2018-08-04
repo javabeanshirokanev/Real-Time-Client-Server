@@ -13,6 +13,6 @@ import java.io.IOException;
  * @author Широканев Александр
  */
 public interface UpdatedListener {
-    void dataUpdated();
-    void updatingMessageReceived(DataInputStream reader) throws IOException;
+    void dataUpdated(RealTimeClient sender);
+    void updatingMessageReceived(RealTimeClient sender, DataInputStream reader) throws IOException;
 }

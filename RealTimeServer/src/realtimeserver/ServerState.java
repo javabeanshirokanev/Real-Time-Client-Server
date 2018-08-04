@@ -17,6 +17,6 @@ public interface ServerState {
     boolean isParamsCorrect(byte[] params);
     byte[] getStateForConnectedClient(InetAddress ip, int port, int clientID);
     byte[] getUnswerToQuery(InetAddress ip, int port, DataInputStream in);
-    void update();
-    void updatingMessageReceived(DataInputStream reader) throws IOException;
+    void update(RealTimeServer server);
+    void updatingMessageReceived(RealTimeServer server, DataInputStream reader) throws IOException;
 }
