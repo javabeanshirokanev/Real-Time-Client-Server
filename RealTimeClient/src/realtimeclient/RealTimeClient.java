@@ -70,16 +70,20 @@ public class RealTimeClient {
     public static final byte BAN_ERROR = 20;     //Подключаемый клиент в чёрном списке
     public static final byte AGAIN = 21;         //Timeout отправленного сообщения, нужно отправить снова
     public static final byte NEXT_PART = 22;         //Timeout отправленного сообщения, нужно отправить снова
+    public static final byte UNCONNECT_QUERY = 23;
+    public static final byte ADMIN_COMMAND = 24;
     
     public static final byte QUERY_CONNECTION_STATE = 0;
     public static final byte QUERY_CLIENT_STATE = 1;
+    
+    public boolean isStateExist = false;
     
     private int clientID = -1;     //Индекс клиента
     
     private final DatagramSocket socket;
     private InetSocketAddress mainAddress = null;
     
-    private TimeOutUDPSenderReceiver senderReceiver;
+    private SimpleUDPSenderReceiver senderReceiver;
     
     //private final byte[] sendData;
     //private int writedIndex = 0;          //Индекс, на котором остановились при отправке
@@ -151,9 +155,9 @@ public class RealTimeClient {
         partSize = FIXED_LENGTH;
         //socket.setSoTimeout(timeout);
         this.delay = delay;
-        writer = new PartWriter(FIXED_LENGTH);
+        writer = new PartWriter(FIXED_LENGTH, 4);    //Свойство - id клиента
         reader = new PartReader(FIXED_LENGTH);
-        senderReceiver = new TimeOutUDPSenderReceiver(FIXED_LENGTH, socket, timeout);
+        senderReceiver = new SimpleUDPSenderReceiver(FIXED_LENGTH, socket);
     }
     
     public int getClientID() { return clientID; }
@@ -169,7 +173,9 @@ public class RealTimeClient {
      */
     private void addMessage(byte[] additingMessage) {
         if(message == null) {
-            message = additingMessage;
+            message = new byte[additingMessage.length + 1];
+            message[0] = UPDATE_MESSAGE;
+            System.arraycopy(additingMessage, 0, message, 1, additingMessage.length);
         } else {
             byte[] newArr = new byte[message.length];
             System.arraycopy(message, 0, newArr, 0, message.length);
@@ -199,21 +205,26 @@ public class RealTimeClient {
     }
     
     private void sendUpdatingMessage() {
-        byte[] fullMessage = new byte[message.length + 5];
-        fullMessage[0] = UPDATE_MESSAGE;
-        PartWriter.writeInt(clientID, fullMessage, 1);
-        System.arraycopy(message, 0, fullMessage, 5, message.length);
+        if(message == null) {
+            message = new byte[] { UPDATE };
+        }
+        
+        //Если сообщение не нулевое, то оно уже содержит UPDATE_MESSAGE
+        
         writer.writeMessage(message);
         reader.readMessage(queryForNextPart);
         byte[] buffer = reader.getBufferingMessage();
         int count = reader.getMessageLength();
+        
+        reader.resetMessage();
+        message = null;    //Сбрасываем обновляемые сообщения
             
         try(DataInputStream stream = new DataInputStream(new ByteArrayInputStream(buffer, 0, count))) {
-            while(stream.available() > 0) {
+            //while(stream.available() > 0) {
                 processUpdateMessage(stream);
-            }
+            //}
         } catch(IOException e) {
-                
+            //System.err.println("ERROR");
         }
     }
     
@@ -223,11 +234,9 @@ public class RealTimeClient {
      */
     public void sendUpdatingMessage(DataBlock block) {
         int count = block.getByteCount();
-        try(ByteArrayOutputStream bStream = new ByteArrayOutputStream(count + 5)) {
+        try(ByteArrayOutputStream bStream = new ByteArrayOutputStream(count + 3)) {   //2 - тип блока, 1 - UPDATE_MESSAGE
             try(DataOutputStream stream = new DataOutputStream(bStream)) {
-                stream.writeByte(UPDATE_MESSAGE);
-                stream.writeInt(clientID);
-                block.writeData(stream);
+                WriterReader.writeData(stream, block);
                 addMessage(bStream.toByteArray());
             }
         } catch(IOException e) {
@@ -241,35 +250,7 @@ public class RealTimeClient {
      * @throws IOException 
      */
     public void sendUpdatingMessage(byte[] message) throws IOException {
-        byte[] fullMessage = new byte[message.length + 5];
-        fullMessage[0] = UPDATE_MESSAGE;
-        PartWriter.writeInt(clientID, fullMessage, 1);
-        System.arraycopy(message, 0, fullMessage, 5, message.length);
-        addMessage(fullMessage);
-        
-        //Старая версия
-//        int diff = sendData.length - writedIndex;
-//        boolean isStartIndex = writedIndex == 0;
-//        int len = (isStartIndex) ? message.length + 3 : message.length;
-//        if(len <= diff) {
-//            if(isStartIndex) {
-//                try (ByteArrayOutputStream writer = new ByteArrayOutputStream(sendData.length)) {
-//                    DataOutputStream stream = new DataOutputStream(writer);
-//                    stream.writeByte(UPDATE_MESSAGE);
-//                    stream.writeShort(clientID);
-//                    stream.write(message);
-//                    byte[] arr = writer.toByteArray();
-//                    System.arraycopy(arr, 0, sendData, 0, arr.length);
-//                    writedIndex += len;
-//                }
-//            } else {
-//                System.arraycopy(message, 0, sendData, writedIndex, message.length);
-//                writedIndex += len;
-//            }
-//        } else {
-//            //Отправка должна быть сложным пакетом с соответствующим параметром
-//            throw new IOException("Сообщение слишком длинное");
-//        }
+        addMessage(message);
     }
     
 //    /**
@@ -290,40 +271,38 @@ public class RealTimeClient {
 //        sendClientQueryMessage(new byte[] { QUERY_CLIENT_STATE });
 //    }
     
-    public byte[] getResultQuery(byte[] message) throws IOException {
-        byte[] fullMessage = new byte[message.length + 5];
-        PartWriter.writeInt(clientID, fullMessage, 0);     //Нужен, чтобы по частям всё было
-        fullMessage[4] = QUERY;
-        System.arraycopy(message, 0, fullMessage, 5, message.length);
-        addMessage(fullMessage);
-        return getQueryResult(fullMessage);
-        
-        
-//        if(queryMessage != null) {
-//            //Формируем запрос
-//            try (ByteArrayOutputStream writer = new ByteArrayOutputStream()) {
-//                DataOutputStream stream = new DataOutputStream(writer);
-//                stream.writeByte(QUERY);
-//                stream.write(message);
-//                queryMessage = writer.toByteArray();    //Записываем сообщение
-//            }
-//        } else {
-//            //Дополняем сообщение
-//            byte[] newQuery = new byte[queryMessage.length + message.length];
-//            System.arraycopy(queryMessage, 0, newQuery, 0, queryMessage.length);
-//            System.arraycopy(message, 0, newQuery, queryMessage.length, message.length);
-//            queryMessage = newQuery;
-//        }
-    }
+//    public byte[] getResultQuery(byte[] message) throws IOException {
+//        byte[] fullMessage = new byte[message.length + 1];
+//        fullMessage[0] = QUERY;
+//        System.arraycopy(message, 0, fullMessage, 1, message.length);
+//        addMessage(fullMessage);
+//        return getQueryResult(fullMessage);
+//        
+//        
+////        if(queryMessage != null) {
+////            //Формируем запрос
+////            try (ByteArrayOutputStream writer = new ByteArrayOutputStream()) {
+////                DataOutputStream stream = new DataOutputStream(writer);
+////                stream.writeByte(QUERY);
+////                stream.write(message);
+////                queryMessage = writer.toByteArray();    //Записываем сообщение
+////            }
+////        } else {
+////            //Дополняем сообщение
+////            byte[] newQuery = new byte[queryMessage.length + message.length];
+////            System.arraycopy(queryMessage, 0, newQuery, 0, queryMessage.length);
+////            System.arraycopy(message, 0, newQuery, queryMessage.length, message.length);
+////            queryMessage = newQuery;
+////        }
+//    }
     
     public DataBlock getResultQuery(DataBlock block) throws IOException, IllegalAccessException, InstantiationException {
         int count = block.getByteCount();
         DataBlock result = null;
-        try(ByteArrayOutputStream bStream = new ByteArrayOutputStream(count + 5)) {
+        try(ByteArrayOutputStream bStream = new ByteArrayOutputStream(count + 3)) {
             try(DataOutputStream stream = new DataOutputStream(bStream)) {
-                stream.writeInt(clientID);
                 stream.writeByte(QUERY);
-                block.writeData(stream);
+                WriterReader.writeData(stream, block);
                 writer.writeMessage(bStream.toByteArray());
                 reader.readMessage(queryForNextPart);
                 byte[] buf = reader.getBufferingMessage();
@@ -334,6 +313,7 @@ public class RealTimeClient {
                         result = WriterReader.readData(in);
                     }
                 }
+                reader.resetMessage();
             }
         } catch(IOException e) {
             
@@ -363,14 +343,17 @@ public class RealTimeClient {
     public void sendAdminCommandClose(byte[] params) throws IOException {
         try (ByteArrayOutputStream writer = new ByteArrayOutputStream()) {
             DataOutputStream stream = new DataOutputStream(writer);
-            stream.writeInt(clientID);
             stream.writeByte(SERVER_CLOSE);
             stream.write(params);
             //sendAdminCommand(writer.toByteArray());
             byte[] mes = writer.toByteArray();
+            byte[] prop = new byte[4];
+            PartWriter.writeInt(-2, prop, 0);
+            this.writer.writeProperty(prop);
             this.writer.writeMessage(mes);
             reader.readMessage(queryForNextPart);
             
+            reader.resetMessage();
         }
     }
     
@@ -408,57 +391,91 @@ public class RealTimeClient {
         
         //Отправляем запрос на подключение и получаем id клиента
         //===================================================
-        byte[] connectMessage = new byte[4];
-        PartWriter.writeInt(-1, connectMessage, 0);    //-1 говорит о том, что клиенту нужен ID
+        byte[] connectMessage = new byte[0];
+        byte[] connectProp = new byte[4];
+        PartWriter.writeInt(-1, connectProp, 0);
+        writer.writeProperty(connectProp);
         writer.writeMessage(connectMessage);
         reader.readMessage();     //Это сообщение короткое
         byte[] unswer = reader.getMessage();    //Не больше 5 байт
-        try (ByteArrayInputStream readerStream = new ByteArrayInputStream(unswer)) {
-            DataInputStream stream = new DataInputStream(readerStream);
-            byte type = stream.readByte();
-            if(type == CONNECT) {
-                clientID = stream.readInt();   //Получили ID
-                PartWriter.writeInt(clientID, queryForNextPart, 4);
-            } else {
-                //Ошибка
-                switch(type) {
-                    case MAX_CLIENTS_ERROR:
-                        for(ConnectedListener listener : conListeners)
-                            listener.connectionFailed(this, MAX_CLIENTS_CONNECTION_FAILED);
-                        break;
-                    case CANNOT_CONNECT_ERROR:
-                        for(ConnectedListener listener : conListeners)
-                            listener.connectionFailed(this, CANNOT_CONNECT_FAILED);
-                        break;
-                }
-                return;
+        reader.resetMessage();
+        byte type = unswer[0];
+        if(type == CONNECT) {
+            clientID = PartReader.readInt(unswer, 1);   //Получили ID
+            byte[] prop = new byte[4];
+            
+            //Запись в локальные параметры клиента для дальнейших передач
+            //------------------------------------------------------------
+            PartWriter.writeInt(clientID, prop, 0);
+            writer.writeProperty(prop);     //Это свойство больше не меняется
+            PartWriter.writeInt(clientID, queryForNextPart, 4);
+            PartWriter.writeInt(clientID, queryForAgainMessage, 4);
+            //------------------------------------------------------------
+        } else {
+            //Ошибка
+            switch(type) {
+                case MAX_CLIENTS_ERROR:
+                    for(ConnectedListener listener : conListeners)
+                        listener.connectionFailed(this, MAX_CLIENTS_CONNECTION_FAILED);
+                    break;
+                case CANNOT_CONNECT_ERROR:
+                    for(ConnectedListener listener : conListeners)
+                        listener.connectionFailed(this, CANNOT_CONNECT_FAILED);
+                    break;
             }
-        } catch(IOException e) {
-            for(ConnectedListener listener : conListeners)
-                listener.connectionFailed(this, RECEIVE_CONNECTION_FAILED);
             return;
         }
+        
+//        try (ByteArrayInputStream readerStream = new ByteArrayInputStream(unswer)) {
+//            DataInputStream stream = new DataInputStream(readerStream);
+//            byte type = stream.readByte();
+//            if(type == CONNECT) {
+//                clientID = stream.readInt();   //Получили ID
+//                PartWriter.writeInt(clientID, queryForNextPart, 4);
+//                PartWriter.writeInt(clientID, queryForAgainMessage, 4);
+//            } else {
+//                //Ошибка
+//                switch(type) {
+//                    case MAX_CLIENTS_ERROR:
+//                        for(ConnectedListener listener : conListeners)
+//                            listener.connectionFailed(this, MAX_CLIENTS_CONNECTION_FAILED);
+//                        break;
+//                    case CANNOT_CONNECT_ERROR:
+//                        for(ConnectedListener listener : conListeners)
+//                            listener.connectionFailed(this, CANNOT_CONNECT_FAILED);
+//                        break;
+//                }
+//                return;
+//            }
+//        } catch(IOException e) {
+//            for(ConnectedListener listener : conListeners)
+//                listener.connectionFailed(this, RECEIVE_CONNECTION_FAILED);
+//            return;
+//        }
         //===================================================
             
         
         byte[] params = getConnectionParameters();
-        byte[] finalConnectMessage = new byte[params.length + 5];
+        byte[] finalConnectMessage = new byte[params.length + 1];
+        //PartWriter.writeInt(clientID, finalConnectMessage, 0);
         finalConnectMessage[0] = FINAL_CONNECT;
-        PartWriter.writeInt(clientID, finalConnectMessage, 1);
-        System.arraycopy(params, 0, connectMessage, 5, params.length);
+        System.arraycopy(params, 0, finalConnectMessage, 1, params.length);
         
         writer.writeMessage(finalConnectMessage);
-        reader.readMessage(queryForNextPart);
+        reader.readMessage(queryForNextPart, queryForAgainMessage);
         byte[] finalUnswer = reader.getMessage();
+        reader.resetMessage();
         
         try (ByteArrayInputStream reader = new ByteArrayInputStream(finalUnswer)) {
             DataInputStream stream = new DataInputStream(reader);
-            byte type = stream.readByte();    //Тип сообщения
-            if(type == FINAL_CONNECT) {
+            byte type0 = stream.readByte();    //Тип сообщения
+            if(type0 == FINAL_CONNECT) {
                 this.iteration = stream.readInt();
-                DataBlock b = WriterReader.readData(stream);
-                for(StateGettedListener listener : stateGettedListeners) {
-                    listener.clientStateGetted(this, b);
+                if(isStateExist) {
+                    DataBlock b = WriterReader.readData(stream);
+                    for(StateGettedListener listener : stateGettedListeners) {
+                        listener.clientStateGetted(this, b);
+                    }
                 }
                 mainAddress = new InetSocketAddress(ip, port);
                 //С этого момента клиент подключен...
@@ -521,8 +538,8 @@ public class RealTimeClient {
     private void adminProcessMessage(byte[] message) throws IOException {
         byte type = message[0];
         if(type == SERVER_CLOSE) {
-            flush();
             for(DisconnectedListener listener : disconListeners) listener.serverClosed(this);
+            flush();
         }
         if(type == ADMIN_AUTHENTIFICATION_ERROR) {
             for(FailedListener listener : failedListeners)
@@ -616,42 +633,45 @@ public class RealTimeClient {
 //            return;
 //        }
         if(messageType == UPDATE) {
-            for(UpdatedListener listener : updateListeners)
-                listener.dataUpdated(this);    //Событие обновления без полученных команд
+            //for(UpdatedListener listener : updateListeners)
+            //    listener.dataUpdated(this);    //Событие обновления без полученных команд
+            return;
         }
         if(messageType == UPDATE_MESSAGE) {
             for(UpdatedListener listener : updateListeners) {
                 listener.updatingMessageReceived(this, stream);    //Событие обработки сообщений
-                listener.dataUpdated(this);    //Событие обновления без полученных команд
+                //listener.dataUpdated(this);    //Событие обновления без полученных команд
             }
+            return;
         }
         if(messageType == SERVER_CLOSE) {
-            flush();
             for(DisconnectedListener listener : disconListeners) {
                 listener.serverClosed(this);
             }
+            flush();
+            return;
         }
         if(messageType == DISCONNECT) {
-            flush();
             for(DisconnectedListener listener : disconListeners)
                 listener.disconnected(this);
+            flush();
+            return;
         }
     }
     
     public void update() {
-        
+        if(mainAddress == null) return;
         iteration++;
         
         //iteration = (iteration + 1) % delay;
-        if(iteration % delay != 0) {
-            //Просто обновляем данные
-            for(UpdatedListener listener : updateListeners) {
-                listener.dataUpdated(this);
-            }
-            return;
+        if(iteration % delay == 0) {
+            sendUpdatingMessage();
         }
-        if(mainAddress == null) return;
-        sendUpdatingMessage();
+        
+        //Просто обновляем данные
+        for(UpdatedListener listener : updateListeners) {
+            listener.dataUpdated(this);
+        }
     }
     
     public void disconnect() {
@@ -668,7 +688,6 @@ public class RealTimeClient {
             byte[] disconnectMessage;
             try(ByteArrayOutputStream stream = new ByteArrayOutputStream(1 + (Short.SIZE >> 3))) {
                 DataOutputStream writer = new DataOutputStream(stream);
-                writer.writeInt(clientID);
                 writer.writeByte(DISCONNECT);
                 disconnectMessage = stream.toByteArray();
             }

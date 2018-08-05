@@ -32,6 +32,16 @@ public class PartReader {
     private final int partSize;
     private final int identificateByteCount = 4; //4 - int для обозначения номера блока, остальное - полезная информация
     
+    //private final byte[] repeatMessage;
+    private final byte[] property;
+    
+    public byte[] getProperty() {
+        return property;
+    }
+    public int getIDfromProperty() {
+        return PartReader.readInt(property, 0);
+    }
+    
     public boolean isMessageReaded() {
         return lastRestBlockCount == 1;
     }
@@ -87,8 +97,13 @@ public class PartReader {
      * @param partSize Размер блока, включающий в себя 4 байта на номер блока и остальные байты на полезную информацию
      */
     public PartReader(int partSize) {
+        this(partSize, 0);
+    }
+    public PartReader(int partSize, int propertyLength) {
         recvBuffer = new byte[partSize];
-        this.partSize = partSize - identificateByteCount;
+        //repeatMessage = new byte[partSize];
+        property = new byte[propertyLength];
+        this.partSize = partSize - identificateByteCount - propertyLength;
     }
     
 //    public void setMessage(byte[] bytes) {
@@ -113,7 +128,7 @@ public class PartReader {
         return resMessage;
     }
     
-    public static int getInt(byte b0, byte b1, byte b2, byte b3) {
+    public static int getInt(byte b3, byte b2, byte b1, byte b0) {
         return (b3 << 24) | ((b2 & 0xff) << 16) | ((b1 & 0xff) <<  8) | ((b0 & 0xff));
     }
     
@@ -122,20 +137,28 @@ public class PartReader {
     }
     
     public void recvPart() {
-        int byteCount = senderReceiver.recv(recvBuffer);    //Сколько байт считано
+        int byteCount = senderReceiver.recv(recvBuffer);    //Сколько байт считано        
+        if(byteCount < 1) {
+            if(byteCount == 2) {
+                
+            }
+            return;
+        }
         this.bufferLength = byteCount;
         cryption.uncrypting(recvBuffer, byteCount);
         
         //Преобразование байтов в int
         //--------------------------------------
         int inverseBlockNumber =
-                (recvBuffer[3] << 24) |
-                ((recvBuffer[2] & 0xff) << 16) |
-                ((recvBuffer[1] & 0xff) <<  8) |
-                ((recvBuffer[0] & 0xff));
-        int usefullByteCount = byteCount - identificateByteCount;
+                (recvBuffer[0] << 24) |
+                ((recvBuffer[1] & 0xff) << 16) |
+                ((recvBuffer[2] & 0xff) <<  8) |
+                ((recvBuffer[3] & 0xff));
+        int usefullByteCount = byteCount - identificateByteCount - property.length;
         lastRestBlockCount = inverseBlockNumber;
         //--------------------------------------
+        
+        System.arraycopy(recvBuffer, 4, property, 0, property.length);
         
         if(message == null) {    //Если сообщение ещё не получали
             blockCount = inverseBlockNumber;    //Отсчёт начинается с 1
@@ -145,7 +168,52 @@ public class PartReader {
         
         int blockNumber = blockCount - inverseBlockNumber;
         int startIndex = blockNumber * partSize;    //Стартовый индекс, с которого начинать запись
-        System.arraycopy(recvBuffer, identificateByteCount, message, startIndex, usefullByteCount);
+        System.arraycopy(recvBuffer, identificateByteCount + property.length, message, startIndex, usefullByteCount);
+        
+        if(inverseBlockNumber == 1) {   //Последний блок
+            messageLength = startIndex + usefullByteCount;   //Сообщение считается считанным
+            receivedEvent();
+        }
+    }
+    public void recvPart(byte[] repeatMessage) {
+        int byteCount = senderReceiver.recv(recvBuffer);    //Сколько байт считано
+        if(byteCount < 1) {
+            if(byteCount == -2) {
+                do {
+                    senderReceiver.send(repeatMessage, repeatMessage.length);
+                    byteCount = senderReceiver.recv(recvBuffer);
+                } while(byteCount == -2);
+            }
+            if(byteCount == -1) {
+                return;
+            }
+        }
+        
+        this.bufferLength = byteCount;
+        cryption.uncrypting(recvBuffer, byteCount);
+        
+        //Преобразование байтов в int
+        //--------------------------------------
+        int inverseBlockNumber =
+                (recvBuffer[0] << 24) |
+                ((recvBuffer[1] & 0xff) << 16) |
+                ((recvBuffer[2] & 0xff) <<  8) |
+                ((recvBuffer[3] & 0xff));
+        int usefullByteCount = byteCount - identificateByteCount - property.length;
+        lastRestBlockCount = inverseBlockNumber;
+        //--------------------------------------
+        
+        System.arraycopy(recvBuffer, 4, property, 0, property.length);
+        
+        if(message == null) {    //Если сообщение ещё не получали
+            blockCount = inverseBlockNumber;    //Отсчёт начинается с 1
+            message = new byte[blockCount * partSize];
+            messageLength = -1;    //Пока что сообщение не считано
+        }
+        
+        int blockNumber = blockCount - inverseBlockNumber;
+        int startIndex = blockNumber * partSize;    //Стартовый индекс, с которого начинать запись
+        System.arraycopy(recvBuffer, identificateByteCount + property.length, message, startIndex, usefullByteCount);
         
         if(inverseBlockNumber == 1) {   //Последний блок
             messageLength = startIndex + usefullByteCount;   //Сообщение считается считанным
@@ -161,21 +229,41 @@ public class PartReader {
         cryption.uncrypting(recvBuffer, byteCount);
         this.bufferLength = byteCount;
         int inverseBlockNumber =
-                (recvBuffer[3] << 24) |
-                ((recvBuffer[2] & 0xff) << 16) |
-                ((recvBuffer[1] & 0xff) <<  8) |
-                ((recvBuffer[0] & 0xff));
+                (recvBuffer[0] << 24) |
+                ((recvBuffer[1] & 0xff) << 16) |
+                ((recvBuffer[2] & 0xff) <<  8) |
+                ((recvBuffer[3] & 0xff));
         lastRestBlockCount = inverseBlockNumber;
         //В буфере хранится полученная информация
+        
+        System.arraycopy(recvBuffer, 4, property, 0, property.length);
     }
+    
+    /**
+     * Искусственное чтение части сообщения из другого reader'а
+     * @param receivedReader 
+     */
     public void appendBufferFromPartReader(PartReader receivedReader) {
-        int receivedByteCount = receivedReader.bufferLength - identificateByteCount;
+        int receivedByteCount = receivedReader.bufferLength - identificateByteCount - property.length;
         byte[] buf = receivedReader.recvBuffer;
-        int blockNumber = receivedReader.blockCount - receivedReader.lastRestBlockCount;
+        int inverseBlockNumber =
+                (buf[0] << 24) |
+                ((buf[1] & 0xff) << 16) |
+                ((buf[2] & 0xff) <<  8) |
+                ((buf[3] & 0xff));
+        lastRestBlockCount = inverseBlockNumber;
+        
+        System.arraycopy(buf, 4, property, 0, property.length);
+        
+        if(message == null) {
+            blockCount = inverseBlockNumber;
+            message = new byte[blockCount * partSize];
+        }
+        int blockNumber = blockCount - lastRestBlockCount;
         //Копирование буфера в сообщение
         //---------------------------------------------------------
         int startIndex = blockNumber * partSize;    //Стартовый индекс, с которого начинать запись
-        System.arraycopy(buf, identificateByteCount, message, startIndex, receivedByteCount);
+        System.arraycopy(buf, identificateByteCount + property.length, message, startIndex, receivedByteCount);
         //---------------------------------------------------------
         if(receivedReader.lastRestBlockCount == 1) {
             messageLength = startIndex + receivedByteCount;
@@ -193,9 +281,16 @@ public class PartReader {
     
     public void readMessage(byte[] messageOK) {
         recvPart();
-        while(messageLength == -1) {
+        while(lastRestBlockCount > 1) {
             senderReceiver.send(messageOK, messageOK.length);
             recvPart();
+        }
+    }
+    public void readMessage(byte[] messageOK, byte[] repeatMessage) {
+        recvPart(repeatMessage);
+        while(lastRestBlockCount > 1) {
+            senderReceiver.send(messageOK, messageOK.length);
+            recvPart(repeatMessage);
         }
     }
 }

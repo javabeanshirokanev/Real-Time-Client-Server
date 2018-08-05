@@ -17,7 +17,7 @@ import java.net.InetAddress;
 public interface ServerState {
     boolean isParamsCorrect(byte[] params);
     DataBlock getStateForConnectedClient(InetAddress ip, int port, int clientID);
-    DataBlock getUnswerToQuery(InetAddress ip, int port, DataInputStream in);
+    DataBlock getUnswerToQuery(InetAddress ip, int port, short blockType, DataBlock receivedBlock);
     void update(RealTimeServer server);
     void updatingMessageReceived(RealTimeServer server, DataInputStream reader) throws IOException;
 }

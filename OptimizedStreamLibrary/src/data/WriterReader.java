@@ -10,6 +10,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javafx.util.Pair;
@@ -33,6 +35,7 @@ public class WriterReader {
      */
     public static DataBlock readData(DataInputStream stream) throws IOException, IllegalAccessException, InstantiationException
     {
+        if(stream.available() == 0) return null;
         short typeIndex = stream.readShort();
         Class type = types[typeIndex];
         DataBlock block = (DataBlock)type.newInstance();
@@ -65,6 +68,18 @@ public class WriterReader {
         return block;
     }
     
+    public static List<DataBlock> readDataBlocks(DataInputStream stream) {
+        List<DataBlock> list = new ArrayList<>();
+        try {
+            while(stream.available() > 0) {
+                list.add(readData(stream));
+            }
+        } catch (IOException | IllegalAccessException | InstantiationException ex) {
+            Logger.getLogger(WriterReader.class.getName()).log(Level.SEVERE, null, ex);
+        }
+        return list;
+    }
+    
     /**
      * Прочитать блок данных и соответствующий идентификатор
      * @param stream Поток
@@ -73,13 +88,14 @@ public class WriterReader {
      * @throws IllegalAccessException
      * @throws InstantiationException 
      */
-    public static Pair<Byte, DataBlock> readIdAndData(DataInputStream stream) throws IOException, IllegalAccessException, InstantiationException
+    public static Pair<Short, DataBlock> readIdAndData(DataInputStream stream) throws IOException, IllegalAccessException, InstantiationException
     {
+        if(stream.available() == 0) return null;
         short typeIndex = stream.readShort();
         Class type = types[typeIndex];
         DataBlock block = (DataBlock)type.newInstance();
         block.readData(stream);
-        Pair<Byte, DataBlock> pair = new Pair(typeIndex, block);
+        Pair<Short, DataBlock> pair = new Pair(typeIndex, block);
         return pair;
     }
     
@@ -112,7 +128,7 @@ public class WriterReader {
     }
     public static byte[] convertToBytes(DataBlock block) {
         byte[] res = null;
-        try(ByteArrayOutputStream stream = new ByteArrayOutputStream(block.getByteCount())) {
+        try(ByteArrayOutputStream stream = new ByteArrayOutputStream(block.getByteCount() + 2)) {  //2 - номер блока данных
             try(DataOutputStream out = new DataOutputStream(stream)) {
                 writeData(out, block);
                 res = stream.toByteArray();

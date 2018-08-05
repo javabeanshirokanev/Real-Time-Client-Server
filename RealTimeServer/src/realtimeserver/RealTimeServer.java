@@ -15,16 +15,20 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
+import java.io.FileWriter;
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.SocketException;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import javafx.util.Pair;
 
 /**
  *
@@ -60,6 +64,8 @@ public class RealTimeServer {
     public static final byte BAN_ERROR = 20;     //Подключаемый клиент в чёрном списке
     public static final byte AGAIN = 21;         //Timeout отправленного сообщения, нужно отправить снова
     public static final byte NEXT_PART = 22;         //Timeout отправленного сообщения, нужно отправить снова
+    public static final byte UNCONNECT_QUERY = 23;
+    public static final byte ADMIN_COMMAND = 24;
     //Добавить команды для информации о сервере (его состояние), информации о клиентах, возможность банить
     
     public static final byte QUERY_CONNECTION_STATE = 0;
@@ -130,12 +136,35 @@ public class RealTimeServer {
     
     public RealTimeServer(int port, ServerState state) throws SocketException
     {
-        this(port, 1000, 1024, state);
+        this(port, 1000, 32, state);
+    }
+    
+    private FileWriter logFile;
+    
+    public void printStatusLog(String log) {
+        if(logFile == null) return;
+        try {
+            Date date = new Date();
+            logFile.append(date.toString());
+            logFile.append(" ");
+            logFile.append(log);
+            logFile.append("\r\n");
+            logFile.flush();
+        } catch (IOException ex) {
+            Logger.getLogger(RealTimeServer.class.getName()).log(Level.SEVERE, null, ex);
+        }
     }
     
     public RealTimeServer(int port, 
             int MAX_CLIENT_COUNT, int FIXED_LENGTH, ServerState state) throws SocketException
     {
+        try {
+            logFile = new FileWriter("status.log", true);
+        } catch(IOException ex) {
+            logFile = null;
+            System.err.println("Не удалось обнаружить лог-файл");
+        }
+        
         serverSocket = new DatagramSocket(port);
         udpSenderReceiver = new SimpleUDPSenderReceiver(FIXED_LENGTH, serverSocket);
        // this.isNeedConnectionPriorityQuery = isNeedConnectionPriorityQuery;
@@ -148,7 +177,7 @@ public class RealTimeServer {
         times = new int[MAX_CLIENT_COUNT];
         //addresses = new InetSocketAddress[MAX_ADDRESSES];
         
-        receiver = new PartReader(FIXED_LENGTH);
+        receiver = new PartReader(FIXED_LENGTH, 4);    //Получение id клиента
         writer = new PartWriter(FIXED_LENGTH);
         receiver.setStaticSenderReceiver(udpSenderReceiver);
         writer.setStaticSenderReceiver(udpSenderReceiver);
@@ -156,7 +185,7 @@ public class RealTimeServer {
         clientReaders = new PartReader[MAX_CLIENT_COUNT];
         for(int i = 0; i < MAX_CLIENT_COUNT; i++) {
             clientWriters[i] = new PartWriter(FIXED_LENGTH);
-            clientReaders[i] = new PartReader(FIXED_LENGTH);
+            clientReaders[i] = new PartReader(FIXED_LENGTH, 4);
             clientWriters[i].setStaticSenderReceiver(udpSenderReceiver);
             clientReaders[i].setStaticSenderReceiver(udpSenderReceiver);
         }
@@ -174,8 +203,7 @@ public class RealTimeServer {
     public void update()
     {
         receiver.readShortPart();    //Ожидаем кусок
-        byte[] buf = receiver.getRecvBuffer();
-        int clientID = PartReader.readInt(buf, 4);   //Первые 4 байта - это номер блока
+        int clientID = receiver.getIDfromProperty();
         InetAddress ip = udpSenderReceiver.getLastIp();
         int port = udpSenderReceiver.getLastPort();
         if(clientID == -1) {
@@ -185,16 +213,28 @@ public class RealTimeServer {
                 
             }
         } else {
+            if(clientID == -2) {
+                //Срочная команда
+                try(ByteArrayInputStream stream = new ByteArrayInputStream(receiver.getRecvBuffer(), 8, receiver.getBufferLength())) {
+                    try(DataInputStream in = new DataInputStream(stream)) {
+                        processUnconnectQuery(in, ip, port);
+                    }
+                } catch(IOException e) {
+                    
+                }
+                return;
+            }
             PartReader currentReader = clientReaders[clientID];
             currentReader.appendBufferFromPartReader(receiver);    //Добавляем сообщение (при полном считывании произойдёт событие)
             if(currentReader.isMessageReaded()) {                
-                try(ByteArrayInputStream stream = new ByteArrayInputStream(currentReader.getBufferingMessage(), 8, currentReader.getMessageLength())) {
+                try(ByteArrayInputStream stream = new ByteArrayInputStream(currentReader.getBufferingMessage(), 0, currentReader.getMessageLength())) {
                     try(DataInputStream in = new DataInputStream(stream)) {
                         processQuery(clientID, in, ip, port);
                     }
                 } catch(IOException e) {
 
                 }
+                currentReader.resetMessage();
             } else {
                 currentReader.writeOK();
             }
@@ -209,13 +249,13 @@ public class RealTimeServer {
     }
     private void sendToClient(InetAddress ip, int port, byte[] message) throws IOException {
         udpSenderReceiver.setEndPoint(ip, port);
-        writer.readyMessage(message);
-        writer.writeShortPart();
+        //writer.readyMessage(message);
+        writer.writeMessage(message);
     }
     private void sendToClient(InetSocketAddress address, byte[] message) throws IOException {
         udpSenderReceiver.setEndPoint(address.getAddress(), address.getPort());
-        writer.readyMessage(message);
-        writer.writeShortPart();
+        //writer.readyMessage(message);
+        writer.writeMessage(message);
     }
     
     private void removeUnusingMessages() {
@@ -254,8 +294,6 @@ public class RealTimeServer {
     //Добавление сообщения от клиента
     private void addUpdateMessageFromClient(byte[] message, int clientID) {
         int time = times[clientID];
-        byte[] mainMessage = new byte[message.length - (CLIENT_ID_LENGTH + 1)];    //Сообщение без типа сообщения и номера клиента
-        System.arraycopy(message, CLIENT_ID_LENGTH + 1, mainMessage, 0, mainMessage.length);
         int messageIndex = messageTimes.indexOf(time);   //Находим время сообщения, совпадающее со временем клиента
         
         boolean isContain = (messageIndex != -1);
@@ -263,16 +301,16 @@ public class RealTimeServer {
         if(isContain) {
             //Если нашли сообщение, и оно еще не отправлялось никому, то объединяем
             byte[] oldMessage = messages.get(messageIndex);
-            byte[] newMessage = new byte[oldMessage.length + mainMessage.length];
+            byte[] newMessage = new byte[oldMessage.length + message.length];
             System.arraycopy(oldMessage, 0, newMessage, 0, oldMessage.length);
-            System.arraycopy(mainMessage, 0, newMessage, oldMessage.length, mainMessage.length);
+            System.arraycopy(message, 0, newMessage, oldMessage.length, message.length);
             messages.set(messageIndex, newMessage);    //Заменяем сообщение
         } else {
             //Добавление нового сообщения
             int newMessageTime = maxTime + 1;    //Новое время
-            byte[] addMessage = new byte[mainMessage.length + 1];   //Добавляемое сообщение (без номера клиента)
+            byte[] addMessage = new byte[message.length + 1];   //Добавляемое сообщение (без номера клиента)
             addMessage[0] = UPDATE_MESSAGE;
-            System.arraycopy(mainMessage, 0, addMessage, 1, mainMessage.length);
+            System.arraycopy(message, 0, addMessage, 1, message.length);
             messages.add(addMessage);
             messageTimes.add(newMessageTime);
             isSended.add(false);
@@ -359,7 +397,7 @@ public class RealTimeServer {
         return min;
     }
     
-    private void updateClient(int clientID, DataInputStream stream) throws IOException {
+    private void updateClient(int clientID) throws IOException {
         removeUnusingMessages();      //Можно поставить в то место, где вызывается реже. Нужен как периодический сборщик мусора
         int clientTime = times[clientID];
         int deltaClientTime = maxTime - clientTime;     //Время клиента
@@ -377,23 +415,42 @@ public class RealTimeServer {
                         times[clientID] += (deltaMessageTime - 1);
                     }
                 } else {
-                    sendToClient(clientID, getUpdateMessageForClient(clientID));
+                    byte[] message = getUpdateMessageForClient(clientID);
+                    sendToClient(clientID, message);
                     times[clientID]++;
-                    if(times[clientID] > maxTime) maxTime = times[clientID];
+                    if(times[clientID] > maxTime) {
+                        maxTime = times[clientID];
+                        //Наступила новая итерация сервера
+                        updatingServer(message);
+                    }
                 }
             }
         } else {
-            sendToClient(clientID, getUpdateMessageForClient(clientID));
+            byte[] message = getUpdateMessageForClient(clientID);
+            sendToClient(clientID, message);
             times[clientID]++;
             if(times[clientID] > maxTime) {
                 maxTime = times[clientID];
                 //Наступила новая итерация сервера
-                if(stream != null) {
-                    state.updatingMessageReceived(this, stream);
-                }
-                state.update(this);
+                updatingServer(message);
             }
         }
+    }
+    
+    private void updatingServer(byte[] updatingMessage) {
+        
+        try (ByteArrayInputStream stream = new ByteArrayInputStream(updatingMessage)) {
+            try (DataInputStream in = new DataInputStream(stream)) {
+                byte type = in.readByte();
+                if(type == UPDATE_MESSAGE) {
+                    state.updatingMessageReceived(this, in);
+                }
+            }
+        } catch(IOException e) {
+
+        }
+        
+        state.update(this);
     }
     
     private boolean isConnectedClient(InetAddress clientIPAddress, int clientPort, int clientID) {
@@ -429,6 +486,10 @@ public class RealTimeServer {
         
         serverSocket.close();
         serverSocket = null;    //Сервер не работает с этого момента
+        
+        if(logFile != null) {
+            logFile.close();
+        }
     }
     
 //    protected abstract byte[] getErrorMessageIfInvalidParams(DataInputStream reader);
@@ -468,6 +529,7 @@ public class RealTimeServer {
         RealTimeServer server = null;
         try {
             server = new RealTimeServer(port, null);   //Параметры через аргументы
+            System.out.println("server started");
             runServer(server);
         } catch(SocketException e) {
             
@@ -489,11 +551,14 @@ public class RealTimeServer {
                 bytes[0] = CONNECT;
                 PartWriter.writeInt(connectedClientID, bytes, 1);
                 clientWriters[connectedClientID].writeMessage(bytes);
+                printStatusLog("Client [" + clientIPAddress.toString() + ":" + clientPort + "] with " + connectedClientID + " connected to server");
             } else {
                 sendToClient(clientIPAddress, clientPort, new byte[] { MAX_CLIENTS_ERROR });
+                printStatusLog("Client [" + clientIPAddress.toString() + ":" + clientPort + "] didn't connected to server by reason of max clients");
             }
         } else {
             sendToClient(clientIPAddress, clientPort, new byte[] { CANNOT_CONNECT_ERROR });
+            printStatusLog("Client [" + clientIPAddress.toString() + ":" + clientPort + "] didn't connected to server by reason of problems on server");
         }
     }
     
@@ -503,43 +568,68 @@ public class RealTimeServer {
     public boolean isClientBanned(InetAddress ip) {
         return blackList.contains(ip);
     }
+    
+    public void processUnconnectQuery(DataInputStream in, InetAddress clientIPAddress, int clientPort) {
+        try {
+            byte messageType = in.readByte();
+            if(messageType == SERVER_CLOSE) {
+                //Добавить аутентификацию
+                serverClose();
+            }
+        } catch(IOException ex) {
+            
+        }
+    }
 
     public void processQuery(int clientID, DataInputStream in, InetAddress clientIPAddress, int clientPort) {
         try {
-            byte messageType = (byte)in.readByte();
-            byte[] message = getMessage(in);
+            byte messageType = in.readByte();
             if(messageType == UPDATE) {
-                if(isConnectedClient(clientIPAddress, clientPort, clientID)) {
-                    updateClient(clientID, null);
+                //if(isConnectedClient(clientIPAddress, clientPort, clientID)) {
+                    updateClient(clientID);
 //                    if(trySendQuery(clientID) == false) {
 //                        //Если срочного запроса нет, обновляемся
 //                        updateClient(clientID);
 //                    }
-                } else {
-                    sendErrorMessageAboutNonConnected(clientIPAddress, clientPort);
-                }
+//                } else {
+//                    sendErrorMessageAboutNonConnected(clientIPAddress, clientPort);
+//                }
                 return;
             }
             if(messageType == UPDATE_MESSAGE) {
-                if(isConnectedClient(clientIPAddress, clientPort, clientID)) {
+                //if(isConnectedClient(clientIPAddress, clientPort, clientID)) {
+                    byte[] message = getMessage(in);
                     addUpdateMessageFromClient(message, clientID);   //Сообщение добавляем всегда
-                    updateClient(clientID, in);
+                    updateClient(clientID);
 //                    if(trySendQuery(clientID) == false) {
 //                        //Если срочного запроса нет, обновляемся
 //                        updateClient(clientID);
 //                    }
-                } else {
-                    sendErrorMessageAboutNonConnected(clientIPAddress, clientPort);
-                }
+                //} else {
+                    //sendErrorMessageAboutNonConnected(clientIPAddress, clientPort);
+                //}
                 return;
             }
             if(messageType == QUERY) {
-                DataBlock data = state.getUnswerToQuery(clientIPAddress, clientPort, in);
-                byte[] query = WriterReader.convertToBytes(data);
-                byte[] mess = new byte[query.length + 1];
-                mess[0] = QUERY;
-                System.arraycopy(query, 0, mess, 1, query.length);
-                sendToClient(clientIPAddress, clientPort, mess);
+                if(state != null) {
+                    Pair<Short, DataBlock> pair = null;
+                    try {
+                        pair = WriterReader.readIdAndData(in);
+                    } catch (IllegalAccessException | InstantiationException ex) {
+                        return;
+                    }
+                    DataBlock data = state.getUnswerToQuery(clientIPAddress, clientPort, pair.getKey(), pair.getValue());
+                    byte[] query = WriterReader.convertToBytes(data);
+                    //byte[] mess = new byte[query.length + 1];
+                    //mess[0] = QUERY;
+                    //System.arraycopy(query, 0, mess, 1, query.length);
+                    sendToClient(clientID, query);
+                    //printStatusLog(query.length + " bytes were sended");
+                } else {
+                    byte[] mess = new byte[1];
+                    mess[0] = QUERY;
+                    sendToClient(clientID, mess);
+                }
                 return;
             }
             if(messageType == NEXT_PART) {
@@ -554,38 +644,38 @@ public class RealTimeServer {
                 
                 byte[] params = new byte[in.available()];
                 in.readFully(params);
-                if(state.isParamsCorrect(params)) {
-                    byte[] mess = null;
-                    if(state != null) {
+                if(state != null) {
+                    if(state.isParamsCorrect(params)) {
                         DataBlock r = state.getStateForConnectedClient(clientIPAddress, clientPort, clientID);
-                        mess = WriterReader.convertToBytes(r);
-                    }
-                    if(mess != null) {
+                        byte[] mess = WriterReader.convertToBytes(r);
+                        
                         byte[] resultMessage = new byte[mess.length + 5];
                         resultMessage[0] = FINAL_CONNECT;
                         PartWriter.writeInt(maxTime, resultMessage, 1);
                         System.arraycopy(mess, 0, resultMessage, 5, mess.length);
-                        sendToClient(clientIPAddress, clientPort, resultMessage);    //Отправляем локальное состояние клиенту
-                    } else {
-                        byte[] resultMessage = new byte[5];
-                        resultMessage[0] = FINAL_CONNECT;
-                        PartWriter.writeInt(maxTime, resultMessage, 1);
-                        sendToClient(clientIPAddress, clientPort, resultMessage);
+                        sendToClient(clientID, resultMessage);    //Отправляем локальное состояние клиенту
                     }
+                } else {
+                    byte[] resultMessage = new byte[5];
+                    resultMessage[0] = FINAL_CONNECT;
+                    PartWriter.writeInt(maxTime, resultMessage, 1);
+                    sendToClient(clientID, resultMessage);
                 }
                 return;
             }
             if(messageType == DISCONNECT) {
                 if(isConnectedClient(clientIPAddress, clientPort, clientID)) {
                     removeClient(clientID);
+                    printStatusLog("client " + clientID + " disconnected");
                 } else {
                     sendErrorMessageAboutNonConnected(clientIPAddress, clientPort);
                 }
                 return;
             }
             if(messageType == SERVER_CLOSE) {
-                byte[] params = new byte[message.length - 1];
-                in.read(params);
+                //byte[] message = getMessage(in);
+                byte[] params = new byte[in.available()];
+                in.readFully(params);
                 if(isCanExecuteServerCommand(params)) {
                     serverClose();
                 } else {
