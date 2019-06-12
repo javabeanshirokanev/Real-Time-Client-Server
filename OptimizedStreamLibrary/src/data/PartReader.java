@@ -5,6 +5,8 @@
  */
 package data;
 
+import data.cryption.NonCryption;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
